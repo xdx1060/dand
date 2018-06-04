@@ -1,0 +1,545 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+
+### Prosper数据集EDA探索
+  在这个探索性分析中，我们将探索来自Prosper公司的贷款数据集，通过这次分析我们将尝试了解以下问题。
+  1.Prosper是一个怎么样的贷款平台？
+  2.使用Prosper贷款平台的用户有什么特点？
+  3.什么用户违约的机率会比较高
+  
+  由于这个数据集变量众多(81),部分变量数据缺失严重，这将会给我们的分析带来一定困难，为了减少难度和基于我们想了解的问题，我们将从以下三个角度进行变量选择。
+  
+  1.选择数据完整度较高的变量,因为较高的数据完整度能一定反映出变量的重要性。
+  2.选择能反映贷款信息的变量，例如利率，分期数等。
+  3.选择能反映用户个人信息的变量，例如职业，收入等。
+
+
+####名词解释
+  Term：贷款期限
+  
+  LoanStatus：贷款状态(Completed、Current、Defaulted、Chargedoff等)
+  
+  BorrowerRate：借款利率，在不包含其他成本下，能直接表示贷款人与投资人的付出和收益
+  
+  ListingCategory：贷款用途（家居装修,商业,整容,家庭开支,购物,医疗,房车,度假,结婚贷款等）
+  
+  Occupation:贷款人职业
+  
+  EmploymentStatus:贷款人的就业状态（全职,兼职等）
+  
+  EmploymentStatusDuration:贷款人的就业时长（单位/月）
+  
+  IsBorrowerHomeowner：贷款人是否有房屋
+  
+  CreditScoreRangeLower/CreditScoreRangeUpper:消费信用最低/最高分
+  
+  InquiriesLast6Months：最近6个月查过多少授信记录,能侧面体现贷款人的资金压力
+  
+  DelinquenciesLast7Years：贷款人过去7年的违约次数，反映贷款人的守信程度
+  
+  BankCardUse：贷款人信用循环额度使用的百分比
+  
+  IncomeVerifiable：是否有文件证明贷款人的收入
+  
+  StatedMonthlyIncome：贷款人的月收入
+  
+  MonthlyLoanPayment：每月需要还多少钱
+  
+  LoanOriginalAmount：借款金额
+  
+  dti:每月还款额占月收入的百分比
+  
+  integrity：贷款信息的完整度
+  
+  
+```{r global_options, include=FALSE}
+ knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+
+```{r}
+setwd('/Users/zhengweijian/Desktop/未命名文件夹 2')
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(VIM)
+library(vcd)
+library(psych)
+library(rpart)
+library(reshape2)
+library(plyr)
+library(corrplot)
+library(randomForest)
+library(caret)
+library(party)
+library(corrplot)
+library(gridExtra)
+```
+
+
+
+```{r}
+pld <- read.csv('prosperLoanData.csv',stringsAsFactors = FALSE,na.strings = c(""))
+mytheme <-theme(plot.title = element_text(hjust = 0.5) ,text = element_text(family = "STHeiti"))
+```
+#### 初步了解Prosper平台
+
+1.数据缺失统计
+```{r}
+temp_pld = pld
+temp_pld[is.na(temp_pld)]<-0
+#统计变量的值缺失情况
+isNaCount <- function(x) sum(x==0)
+isNa_df <- colwise(isNaCount)
+naCount_pld<-isNa_df(temp_pld)
+str(sort(naCount_pld)/113927)
+```
+
+2.重复数据统计
+```{r}
+myRepetvars <-duplicated(pld$MemberKey)
+nrow(pld[myRepetvars,])
+```
+
+```{r}
+#统计个人信息完整度
+pld$integrity<-apply(temp_pld == 0,1,sum)/81
+pld$integrity <- round(pld$integrity,3)
+summary(pld$integrity)
+
+ggplot(data = pld,aes(integrity))+
+  geom_histogram(binwidth = 0.05,color=I('black'))+
+  scale_x_continuous(breaks = seq(0.05,0.65,0.05))+
+  labs(title = '用户资料完整度统计',x='完整度',y = '数量')+
+  mytheme
+```
+
+#### 数据集情况概括
+  1.该平台一共113937条数据，包含23106条重复数据。
+  2.该数据集一共有81个变量，其中18个变量无缺失，20个变量缺失率80%-99%之间，其余变量大部分缺失率在1%-10%之间。
+  3.个人信息完整度最高65%，最低6%，平均完整度31%。
+  
+  
+
+#### 单变量分析
+```{r}
+pld$year <-substr(pld$ListingCreationDate,1,4)
+LoanOriginalAmountCount <-aggregate(pld[,c('LoanOriginalAmount')],by=list(pld$year),FUN = sum)
+
+colnames(LoanOriginalAmountCount) = c('year','count')
+
+ggplot(data=LoanOriginalAmountCount,aes(x=year,y=count))+
+  geom_bar(stat = "identity") +
+  labs(title = '年度总贷款金额统计(单位万元)',x='年度',y = '金额')+
+  mytheme
+```
+
+  我们可以看出Prosper贷款平台从2005年发放第一笔贷款以来贷款额度稳步增长，2009年有个低谷，随后贷款总额稳步增长。（数据集只记录了2005年-2014年的数据）
+
+```{r}
+summary(pld$LoanOriginalAmount)
+ggplot(data=pld,aes(LoanOriginalAmount))+
+  geom_histogram(color=I('black')) +
+  scale_x_continuous(breaks=seq(0,35000,2500),limits = c(1000,35000))+
+  labs(title = '贷款金额分布',x='贷款金额',y = '数量')+
+  mytheme
+```
+
+  贷款最低金额1000美元，平均8447美元，最高35000美元。从图观察出大概在4000美元是最多人的借款金额.
+
+```{r}
+pld$BorrowerAPR <- pld$BorrowerAPR*100
+ggplot(data=pld,aes(BorrowerAPR))+
+  geom_histogram(color = I('black'))+
+  scale_x_continuous(breaks = seq(0,50,5))+
+  labs(title = '贷款年利率',x='年利率',y = '数量')+
+  mytheme
+```
+
+年利率集中在10%-35%之间
+
+  
+```{r}
+pld$BankCardUse[pld$BankcardUtilization<=0.25]<-'less'
+
+pld$BankCardUse[pld$BankcardUtilization>0.25 & pld$BankcardUtilization<=0.5]<-'medium'
+
+pld$BankCardUse[pld$BankcardUtilization>0.5 & pld$BankcardUtilization<=0.75]<-'hight'
+
+pld$BankCardUse[pld$BankcardUtilization>0.75]<-'excess'
+
+pld$BankCardUse <- factor(pld$BankCardUse,levels=c('less','medium',
+'hight','excess'),ordered = TRUE)
+table(pld$BankCardUse)
+
+ggplot(data = pld,aes(BankCardUse)) +
+  geom_bar(color = I('black'))+
+  labs(title = '信用卡占用比例统计',x='占比',y = '数量')+
+  mytheme
+```
+
+  less : 信用卡使用额度小于25%
+  medium : 信用卡使用额度在25%-50%之间
+  hight : 信用卡使用额度在50%-75%之间
+  excess : 信用卡使用额度大于75%
+  我们可以看出Prosper平台用户信用卡使用额度都较高。这个指标有大约1W多个用户信息缺失。
+  
+  
+```{r}
+  ggplot(data=pld,aes(ListingCategory..numeric.))+
+  geom_histogram(binwidth = 1,color = I('black'))+
+  scale_x_continuous(breaks = seq(0,20,1),labels = c('不可用','债务合并','家庭改善','商业','个人贷款','学生使用','汽车','其他','婴儿和领养','船','整容','订婚戒指','绿色贷款','家庭开支','大量购物','医疗','摩托车','房车','税','度假','结婚贷款'))+
+  theme(axis.text.x  = element_text(angle = 90))+
+  mytheme
+```
+
+  债务合并选项远远高于其他选项，假如这个是真实可信的，说明使用Prosper平台的贷款的人可能存在多笔贷款，比较依赖贷款生活。
+  
+  
+```{r}
+table(pld$IsBorrowerHomeowner)
+```
+
+  用户拥有房产的比例大概在50%，可以看出是否拥有房产并不阻碍使用这个贷款平台
+
+
+```{r}
+ggplot(data = pld,aes(InquiriesLast6Months)) +
+  geom_histogram(binwidth = 1,color = I('black'))+
+  scale_x_continuous(breaks = seq(0,100,5))+
+  scale_y_sqrt()+
+  labs(title = '征信报告查询次数分布',x='征信报告查询次数',y = '数量')+
+  mytheme
+```
+
+  我国小额贷款（消费贷）大部分都有查征信的要求，一般都是半年内少于3次。该平台大部分用户查询次数集中在0-5次之间。
+
+
+```{r}
+ggplot(data = pld,aes(IncomeRange)) +
+  geom_bar(color = I('black'))+
+  labs(title = '年收入分布',x='年收入范围',y = '数量')+
+  mytheme+
+  theme(axis.text.x  = element_text(angle = 90))
+```
+
+  大多数用户年收入在2.5W-7.5W美元之间
+  
+  
+```{r}
+ggplot(data = pld,aes(DelinquenciesLast7Years)) +
+  geom_histogram(color = I('black'),binwidth = 1)+
+  scale_x_continuous(breaks = seq(0,100,5))+
+  scale_y_sqrt()+
+  labs(title = '七年内违约次数分布',x='违约次数',y = '数量')+
+  mytheme
+```
+
+  过去7年的违约数主要集中在0次
+
+```{r}
+pld$EmploymentStatusDuration <-pld$EmploymentStatusDuration/12
+summary(pld$EmploymentStatusDuration)
+ggplot(data = pld ,aes(EmploymentStatusDuration))+
+  geom_histogram(binwidth = 1,color = I('black'))+
+  scale_x_continuous(breaks =seq(0,60,2))+
+  labs(title = '持续工作年限统计',x='工作年限',y = '数量')+
+  mytheme
+```
+
+  数据呈左偏分布，年限持续年限越短越多人
+  
+```{r}
+pld$temp<-pld$MonthlyLoanPayment/pld$StatedMonthlyIncome*100
+pld$temp <- round(pld$temp,0)
+pld$temp[pld$temp == 'Inf']<- 0
+pld$temp[is.na(pld$temp)]<-0
+
+pld$dti[pld$temp == 0] <-'unknown'
+pld$dti[pld$temp> 0 & pld$temp<=25]<-'easy'
+pld$dti[pld$temp>25 & pld$temp<=50]<-'normal'
+pld$dti[pld$temp>50 & pld$temp<=75]<-'hard'
+pld$dti[pld$temp>75 & pld$temp<=100]<-'expert'
+pld$dti[pld$temp>100]<-'master'
+pld$dti <- factor(pld$dti,levels=c('easy','normal',
+'hard','expert','master','unknown'),ordered = TRUE)
+
+table(pld$dti)
+```
+
+  easy : 还款额占月收入比小于25%
+  normal : 还款额占月收入比在25%-50%之间
+  hard : 还款额占月收入比在50%-75%之间
+  expert : 还款额占月收入比在75%-100%之间
+  master ：还款额占月收入比大于100%
+  unknown : 0和NA值
+  我们可以看出Prosper平台用户还款额占月收入比集中在1-25%，还有少量用户超过100%
+
+
+```{r}
+pld_occupation<-pld%>%
+  group_by(Occupation)%>%
+  dplyr::summarise(count = n())%>%
+  arrange(desc(count))%>%
+  head(10)
+  
+ggplot(data = pld_occupation,aes(Occupation,count)) +
+  geom_bar(stat = 'identity')+
+  labs(title = '前十种职业统计',x='职业',y = '数量')+
+  theme(axis.text.x  = element_text(angle = 90))+
+  mytheme
+```
+
+  可以看出大部分人都不太愿意透露职业，该项真实性存疑。
+  
+#### 关于是否从数据集中的现有变量创建了任何新变量
+  在单边分析中我们创建了3个新变量，分别是：
+  1.BankCardUse：这个变量主要是查看贷款用户使用信用卡的占比，如果使用占比较高，我们有理由相信贷款用户资金比较紧张，进而导致风险提升。
+  
+  2.dti：这个变量主要查看每月还款额占月收入的百分比，越高风险也相对越高
+  
+  3.integrity:贷款人提供信息的完整度，对贷款人越了解，我们认为风险会相对越低
+
+
+### 用户特点概括
+  1.平台用户普遍信用卡利用率都较高，结合贷款选项看，该平台用户可能都比较依赖贷款，可能存在多笔贷款的情况。
+  2.大部分用户过去7年都无违约，并且在过去6个月内查询报告少于5次
+  3.用户资产大约一半人数拥有房产，年收入集中在2.5W美元与7.5W美元之间，职业不明。
+
+
+### 什么用户违约的机率会比较高
+```{r}
+pld_complete<-filter(pld,!is.na(pld$ClosedDate))
+myvars <-c('Term','LoanStatus','BorrowerAPR','EmploymentStatusDuration','IsBorrowerHomeowner','InquiriesLast6Months','DelinquenciesLast7Years','BankCardUse','StatedMonthlyIncome','LoanOriginalAmount','integrity','dti','year')
+new_pld<-pld_complete[myvars]
+
+new_pld$year <- as.numeric(new_pld$year)
+new_pld$BorrowerAPR[is.na(new_pld$BorrowerAPR)] <-mean(new_pld$BorrowerAPR,na.rm = TRUE)
+new_pld$LoanStatus[new_pld$LoanStatus == 'Defaulted'] <-'Completed'
+new_pld$IsBorrowerHomeowner<- factor(new_pld$IsBorrowerHomeowner)
+new_pld$Term <- as.numeric(new_pld$Term)
+new_pld$LoanStatus <- factor(new_pld$LoanStatus)
+set.seed(1234)
+train<- sample(nrow(new_pld),0.7*nrow(new_pld))
+new_pld.train <- new_pld[train,]
+new_pld.validate<-new_pld[-train,]
+table(new_pld.train$LoanStatus)
+table(new_pld.validate$LoanStatus)
+
+set.seed(1234)
+fit.forest<- randomForest(LoanStatus~.,data = new_pld.train,na.action = na.roughfix,importance=TRUE)
+
+importance(fit.forest,type = 2)
+```
+
+  首先我们选取的变量都是相对来说完整度较高和贷款人信息相关的字段，我们相信完整度较高的变量相对来说对平台比较重要，贷款人信息相关的字段有助于我们了解贷款人的资质。在通过已完成的订单分析，我们可知借款状态由坏账、逾期、完成组成，因此我们可以认为逾期最终是还款了，并没有达到坏账的程度，接下来的分析我们将建立在已完成的贷款上，并将问题归纳为二元分类，即贷款状态只有完成和坏账两种状态，最后我们尝试用随机森林进行分类，并且将重要性变量进行输出，我们可以看出信息完整度、年利率,相对其他变量来说重要性比较高。
+  
+  
+## 双变量分析
+
+```{r}
+pld$Term<-as.character(pld$Term)
+ggplot(data = pld,aes(Term,BorrowerAPR))+
+  geom_boxplot()+
+  labs(title = '分期数与年利率',x='分期数',y = '年利率')+
+  mytheme
+```
+
+  该平台三种分期服务平均年利率并没有明显变化都在在20%-25%之间。在这种情况下分期数越长代表要还的利息越多（60期即5年，按平均年利率20%，一共需要还本金的两倍，同时由于还款时间长，还款压力会相对小一些）
+  
+```{r}
+ggplot(data = new_pld,aes(LoanStatus,integrity))+
+  geom_boxplot()+
+  labs(title = '贷款状态与信息完整度',x='贷款状态',y = '信息完整度')+
+  mytheme
+```
+
+  基于上面的分析，我们得知平台的信息完整度平均31%，从这个图可以看出坏账的信息完整度基本都要低于平台的平均完整度，而顺利完成贷款的人平均信息完整度要比坏账高
+
+```{r}
+ggplot(data = new_pld,aes(LoanStatus,BorrowerAPR))+
+  geom_boxplot()+
+  stat_summary(fun.y = mean,geom = 'point',shape = 4)+
+  labs(title = '贷款状态与年利率',x='贷款状态',y = '年利率')+
+  mytheme
+```
+
+坏账的平均年利率要比完成还款的人高6%左右
+
+
+```{r}
+ggplot(data = new_pld,aes(integrity,LoanOriginalAmount))+
+  geom_point()+
+  stat_smooth()+
+  labs(title = '信息完整度与贷款金额',x='信息完整度',y = '贷款金额')+
+  mytheme
+```
+
+  从图形中看不出有什么明显关系
+  
+```{r}
+cor.test(new_pld$BorrowerAPR,new_pld$StatedMonthlyIncome,method = 'pearson')
+```
+  
+  从结果来看，与我们图形中观察的结果一直，两者不具备明显相关性
+
+```{r}
+new_pld<- subset(new_pld,new_pld$StatedMonthlyIncome<200000)
+ggplot(data = new_pld,aes(BorrowerAPR,StatedMonthlyIncome))+
+  geom_point()+
+  scale_y_sqrt()+
+  stat_smooth()+
+  labs(title = '年利率与月薪',x='年利率',y = '月薪')+
+  mytheme
+```
+
+从图片看两者好像并没有什么明显的关系
+
+
+```{r}
+ggplot(data = new_pld,aes(BankCardUse,BorrowerAPR)) +
+  geom_boxplot()+
+  stat_summary(fun.y = mean,geom = 'point',shape = 4)+
+  labs(title = '信用卡使用程度与年利率',x='信用卡使用程度',y = '年利率')+
+  mytheme
+
+```
+
+  信用卡使用比率越高，年利率也越高
+
+```{r}
+ggplot(data = pld ,aes(IsBorrowerHomeowner,BorrowerAPR))+
+  geom_boxplot()+
+  stat_summary(fun.y = mean,geom = 'point',shape = 4)+
+  labs(title = '是否拥有房产与年利率',x='是否拥有房产',y = '年利率')+
+  mytheme
+ 
+```
+  
+  可以看出拥有房产的用户平均年利率稍微比没有房产的用户年利率低
+  
+  
+  是否有房产跟贷款状态的相关性
+```{r}
+
+mytable<-xtabs(~IsBorrowerHomeowner+LoanStatus,data = new_pld)
+assocstats(mytable)
+
+```
+
+  我们可以看出两个变量间相关性非常弱
+
+```{r}
+pld <- subset(pld,pld$LoanStatus != 'Cancelled')
+pld_complete<-filter(pld,!is.na(pld$ClosedDate))%>%
+  group_by(year,LoanStatus)%>%
+  dplyr::summarise(count = n())
+
+ggplot(data=pld_complete,aes(year,count,fill=LoanStatus))+
+  geom_bar(stat = 'identity',position = position_fill())+
+  labs(title = '年度贷款状态占比',x='年度',y = '百分比')+
+  mytheme
+```
+
+  贷款状态(Completed、Current、Defaulted、Chargedoff等)，我们按照年度进行统计，并发现每年的坏账率都不低
+  
+  
+  信息完整度与年利率的相关性度量
+```{r}
+
+cor.test(new_pld$BorrowerAPR,new_pld$integrity,method = 'pearson')
+```
+
+  从结果来看，两者之间具备弱负相关性
+  
+  
+```{r}
+new_pld%>%
+  group_by(year,LoanStatus)%>%
+  dplyr::summarise(mean = mean(integrity))%>%
+  ggplot(aes(year,mean,color=LoanStatus))+
+  geom_line(stat = 'identity')+
+  scale_x_continuous(breaks = seq(2005,2014,1))
+```
+我们按照年度进行信息完整度统计，信息完整度基本呈现逐年下降趋势，并且可以看出顺利还款给的用户比坏账用户信息完整度要高
+
+
+#### 汇总1
+```{r}
+new_pld%>%
+  group_by(Term,year,LoanStatus)%>%
+  dplyr::summarise(count = n())%>%
+  ggplot(aes(year,count,fill=LoanStatus))+
+  geom_bar(stat = 'identity',position = 'fill')+
+  scale_x_continuous(breaks = seq(2005,2014,1))+
+  facet_wrap(~Term,ncol = 1)+
+  labs(title = '按分期数统计年度违约占比',x='年度',y = '百分比')
+```
+
+  由于贷款字段存在时间效应，我们无法即刻得知当前贷款的最终状态，所以我们选择已经完结的贷款来查看违约与分期数的关系。在这里我们可以看出几个情况。
+  
+  1.Prosper坏账率和违约率很高，部分年份高达25%
+  2.12期分期只有在2008、2010、2011、2012、2013这5年才有推出，并且可以看出12分期是坏账率最低
+  3.36期是该平台主推的服务，并且违约率大于12期服务
+  4.60期分期是从2010年推出的，并且违约率大于36期服务
+  
+   在这里我们顺便总结一下，Prosper贷款平台从2005年到2014年共帮助90831人成功放贷113937次，从贷款金额可以看出该平台主要提供小额贷款为主，并主推36期服务，贷款年利率分布在5%-40%之间。如果按照我国法律规定，在民间借贷中，如果对借款利息的约定超出4倍的视为高利贷。现在我国一至五年（含五年的年利率是4.75%），四倍也就是19%，该平台很大一部分贷款年利率已超过19%。（如果加上平台服务费，费率会更高）。市场有句名言"高风险，才会有高回报"，在这里我们可以换成"高利率等于高违约率"来形容Prosper的运营状况，在这种高违约率的状态下，我们推测12期服务和2010年推出的60期服务除了提高该平台的受众面以外，更重要的一个原因是试图在高利润和高违约率的状态下取得一个平衡。
+  
+  
+#### 汇总2
+```{r}
+p1<-ggplot(data = new_pld,aes(LoanStatus,BorrowerAPR))+
+  geom_boxplot()+
+  stat_summary(fun.y = mean,geom = 'point',shape = 4)+
+  labs(title = '贷款状态与年利率',y = '年利率')+
+  mytheme
+
+p2<-ggplot(data = new_pld,aes(BankCardUse,BorrowerAPR)) +
+  geom_boxplot()+
+  stat_summary(fun.y = mean,geom = 'point',shape = 4)+
+  labs(title = '信用卡使用程度与年利率',y = '年利率')+
+  mytheme
+
+
+p3<-ggplot(data = new_pld ,aes(IsBorrowerHomeowner,BorrowerAPR))+
+  geom_boxplot()+
+  stat_summary(fun.y = mean,geom = 'point',shape = 4)+
+  labs(title = '是否拥有房产与年利率',y = '年利率')+
+  mytheme
+
+grid.arrange(p1, p2, p3,ncol=2)
+```
+ 
+  通过对部分贷款人资质变量进行分析，有几点发现
+  1.平台对贷款人的风险体现主要体现在年利率，年利率越高的贷款，意味着平台认为有越高的几率会违约
+  2.贷款人的资质主要体现在年利率上，例如有房的人平均年利率要比没房的人低，信用卡使用额度较高的年利率相对也会提高
+.
+
+#### 汇总三
+```{r}
+ggplot(data = new_pld,aes(integrity,BorrowerAPR,color=LoanStatus,alpha=0.1))+
+  geom_point()+
+  geom_jitter()+
+  labs(title = '信息完整度、年利率与贷款状态的分布',x='信息完整度',y = '年利率')+
+  mytheme
+```
+
+  从散点图中有两点发现
+  1.完整度少于20%的人比较容易形成坏账
+  2.完整度超过40%的人年利率基本很少超过30%
+  
+  从前面的分析我们有几点发现，
+  1.平台在在体现贷款人的风险主要使用利率来调节（风险越高年利率越高）
+  2.在分期服务中我们发现12期服务坏账率<36期服务<60期服务,即选择分期数越多的人相对越容易形成坏账。
+  3.年利率分析时发现60期分期服务和36期服务平均年利率基本没变.
+  4.在随机森林分类和双变量分析时，我们发现信息完整度，是有利于改善坏账率的（信息完整度越低，相对越容易坏账），但是年利率和信息完整度相关性不高。
+  
+  基于以上发现如果我是Prosper平台数据建模师的话，我会尝试提高60期分期服务的年利率，并且调高信息完整度的相关性（完整度越高年利率越低）来提高平台的收益性
+  
+
+### 反思：
+  因为对贷款数据比较感兴趣，所以选择了这个数据集。一开始就遇到了很大的阻碍，首先这么多的变量，我该从哪里开始分析？为了解决这个问题，我首先尝试了用分类模型进行分类，由于变量太多，并且伴随着很多缺失值，部分变量缺失值高达90%以上，最终毫无疑问以失败告终，最后通过计算信息完整度来和对数据集提出的问题，排除了部分变量。在分析过程中对于提出的问题3‘什么人为违约’有种强烈的疑惑，最后分析完才发现问题提错了，在这个平台中应该改成‘平台是如何定利率的’，因为该平台主要把风险体现在年利率之上。在将来的分析中首先要了解业务的背景知识，可能有助于避免这种问题，在接下来的学习中希望能通过学习机器入门，完善建模的知识，提高建模的准确性
+
